@@ -360,7 +360,8 @@ class Engine(object):
         if sentry_dsn:
             sentry_sdk.init(dsn=sentry_dsn, ignore_errors=[KeyboardInterrupt], before_send=_sentry_pre_send)
             with sentry_sdk.configure_scope() as scope:
-                shotgun_account_name = re.match('.*://(.*).shotgunstudio.com', self.config.getShotgunURL()).group(1)
+                shotgun_account_name = re.match('.*://(.*).(shotgunstudio|shotgrid.autodesk).com',
+                                                self.config.getShotgunURL()).group(1)
                 scope.set_tag("shotgun_account", shotgun_account_name)
                 scope.level = 'fatal'
 
