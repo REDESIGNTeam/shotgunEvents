@@ -36,6 +36,7 @@ with warnings.catch_warnings():
     import imp
 
 import datetime
+import json
 import logging
 import logging.handlers
 import os
@@ -56,7 +57,9 @@ if sys.platform == "win32":
     import win32event
     import servicemanager
 
+import boto3
 import daemonizer
+import requests
 import shotgun_api3 as sg
 from shotgun_api3.lib.sgtimezone import SgTimezone
 
@@ -145,6 +148,7 @@ def _addMailHandlerToLogger(
 
         logger.addHandler(mailHandler)
 
+
 def _sentry_pre_send(event, hint):
     if 'level' in event['extra']:
         event['level'] = event['extra']['level']
@@ -161,19 +165,60 @@ def _sentry_pre_send(event, hint):
     return event
 
 
+def _get_sg_secret(secret_name):
+    # Create a Secrets Manager client
+    sec_session = boto3.session.Session()
+    client = sec_session.client(service_name="secretsmanager", region_name=_get_instance_region())
+    get_secret_value_response = client.get_secret_value(SecretId=secret_name)
+
+    formatted = json.loads(get_secret_value_response["SecretString"])
+    return formatted[secret_name]
+
+
+def _get_sg_host():
+    # Create a Secrets Manager client
+    sec_session = boto3.session.Session()
+    ssm_client = sec_session.client(service_name="ssm", region_name=_get_instance_region())
+    response = ssm_client.get_parameter(Name="AA-ShotgunHost")
+    shotgun_host = response["Parameter"]["Value"]
+
+    return shotgun_host
+
+
+def _get_instance_region():
+    """
+    Get ec2 region from the instance metadata by making an HTTP request.
+
+    AWS doc - https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-data-retrieval.html
+
+    :return: str.
+    """
+    instance_identity_url = "http://169.254.169.254/latest/dynamic/instance-identity/document"
+    response = requests.get(instance_identity_url)
+    response_json = response.json()
+
+    return response_json.get("region")
+
+
 class Config(configparser.SafeConfigParser):
     def __init__(self, path):
         configparser.SafeConfigParser.__init__(self, os.environ)
         self.read(path)
 
     def getShotgunURL(self):
-        return self.get("shotgun", "server")
+        server = self.get("shotgun", "server")
+        if server:
+            return server
+        return _get_sg_host()
 
     def getEngineScriptName(self):
         return self.get("shotgun", "name")
 
     def getEngineScriptKey(self):
-        return self.get("shotgun", "key")
+        key = self.get("shotgun", "key")
+        if key:
+            return key
+        return _get_sg_secret(self.getEngineScriptName())
 
     def getEngineProxyServer(self):
         try:
