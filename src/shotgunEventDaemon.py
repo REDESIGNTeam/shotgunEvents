@@ -58,6 +58,7 @@ if sys.platform == "win32":
     import servicemanager
 
 import boto3
+from boto3.dynamodb import types as dynamodb_types
 import daemonizer
 import requests
 import shotgun_api3 as sg
@@ -165,20 +166,20 @@ def _sentry_pre_send(event, hint):
     return event
 
 
-def _get_sg_secret(secret_name):
+def _get_sg_secret(secret_name, region_name):
     # Create a Secrets Manager client
     sec_session = boto3.session.Session()
-    client = sec_session.client(service_name="secretsmanager", region_name=_get_instance_region())
+    client = sec_session.client(service_name="secretsmanager", region_name=region_name)
     get_secret_value_response = client.get_secret_value(SecretId=secret_name)
 
     formatted = json.loads(get_secret_value_response["SecretString"])
     return formatted[secret_name]
 
 
-def _get_sg_host():
+def _get_sg_host(region_name):
     # Create a Secrets Manager client
     sec_session = boto3.session.Session()
-    ssm_client = sec_session.client(service_name="ssm", region_name=_get_instance_region())
+    ssm_client = sec_session.client(service_name="ssm", region_name=region_name)
     response = ssm_client.get_parameter(Name="AA-ShotgunHost")
     shotgun_host = response["Parameter"]["Value"]
 
@@ -200,16 +201,64 @@ def _get_instance_region():
     return response_json.get("region")
 
 
+class SgEventDaemonIDTable(object):
+    _SCHEMA_COL_PATH = "CollectionPath"
+    _SCHEMA_PLUGIN_STATE = "PluginState"
+
+    def __init__(self, table, region):
+        self._dynamodb = boto3.resource("dynamodb", region_name=region)
+        self._table = self._dynamodb.Table(table)
+
+    def table_exists(self):
+        try:
+            return self._table.table_status == "ACTIVE"
+        except Exception as err:
+            if "ResourceNotFoundException" in str(err):
+                return False
+
+    def get_event_item(self, col_path):
+        return self._table.get_item(Key={self._SCHEMA_COL_PATH: col_path}).get('Item')
+
+    def get_all_event_items(self):
+        return {
+            i[self._SCHEMA_COL_PATH]: dynamodb_types.Binary(
+                i[self._SCHEMA_PLUGIN_STATE]).value for i in self._table.scan().get("Items")
+        }
+
+    def add_event_item(self, col_path, plugin_state):
+        return self._table.put_item(
+            Item={
+                self._SCHEMA_COL_PATH: col_path,
+                self._SCHEMA_PLUGIN_STATE: dynamodb_types.Binary(plugin_state)
+            }
+        )
+
+    def update_event_item(self, col_path, plugin_state):
+        return self._table.update_item(
+            Key={
+                self._SCHEMA_COL_PATH: col_path
+            },
+            UpdateExpression="set {}=:v".format(self._SCHEMA_PLUGIN_STATE),
+            ExpressionAttributeValues={
+                ":v": dynamodb_types.Binary(plugin_state)
+            },
+            ReturnValues="UPDATED_NEW"
+        )
+
+
 class Config(configparser.SafeConfigParser):
     def __init__(self, path):
         configparser.SafeConfigParser.__init__(self, os.environ)
         self.read(path)
+        self._ec2_region = _get_instance_region()
+        self._sg_host = _get_sg_host(self._ec2_region)
+        self._sg_secret = _get_sg_secret(self.getEngineScriptName(), self._ec2_region)
 
     def getShotgunURL(self):
         server = self.get("shotgun", "server")
         if server:
             return server
-        return _get_sg_host()
+        return self._sg_host
 
     def getEngineScriptName(self):
         return self.get("shotgun", "name")
@@ -218,7 +267,7 @@ class Config(configparser.SafeConfigParser):
         key = self.get("shotgun", "key")
         if key:
             return key
-        return _get_sg_secret(self.getEngineScriptName())
+        return self._sg_secret
 
     def getEngineProxyServer(self):
         try:
@@ -229,8 +278,10 @@ class Config(configparser.SafeConfigParser):
         except configparser.NoOptionError:
             return None
 
-    def getEventIdFile(self):
-        return self.get("daemon", "eventIdFile")
+    def getEventIdTable(self):
+        dynamodb_table = SgEventDaemonIDTable(
+            self.get("daemon", "eventIdTable"), self._ec2_region)
+        return dynamodb_table
 
     def getEnginePIDFile(self):
         return self.get("daemon", "pidFile")
@@ -457,80 +508,74 @@ class Engine(object):
 
     def _loadEventIdData(self):
         """
-        Load the last processed event id from the disk
+        Load the last processed event id from the DynamoDB table
 
-        If no event has ever been processed or if the eventIdFile has been
-        deleted from disk, no id will be recoverable. In this case, we will try
+        If no event has ever been processed or if the eventIdTable has been
+        cleared, no id will be recoverable. In this case, we will try
         contacting Shotgun to get the latest event's id and we'll start
         processing from there.
         """
-        eventIdFile = self.config.getEventIdFile()
+        eventIdTable = self.config.getEventIdTable()
 
-        if eventIdFile and os.path.exists(eventIdFile):
+        if eventIdTable.table_exists():
             try:
-                fh = open(eventIdFile, "rb")
-                try:
-                    self._eventIdData = pickle.load(fh)
+                self._eventIdData = {
+                    col: pickle.loads(state) for (col, state) in eventIdTable.get_all_event_items().items()
+                }
 
-                    # Provide event id info to the plugin collections. Once
-                    # they've figured out what to do with it, ask them for their
-                    # last processed id.
-                    noStateCollections = []
-                    for collection in self._pluginCollections:
-                        state = self._eventIdData.get(collection.path)
-                        if state:
-                            collection.setState(state)
-                        else:
-                            noStateCollections.append(collection)
+                # Provide event id info to the plugin collections. Once
+                # they've figured out what to do with it, ask them for their
+                # last processed id.
+                noStateCollections = []
+                for collection in self._pluginCollections:
+                    state = self._eventIdData.get(collection.path)
+                    if state:
+                        collection.setState(state)
+                    else:
+                        noStateCollections.append(collection)
 
-                    # If we don't have a state it means there's no match
-                    # in the id file. First we'll search to see the latest id a
-                    # matching plugin name has elsewhere in the id file. We do
-                    # this as a fallback in case the plugins directory has been
-                    # moved. If there's no match, use the latest event id
-                    # in Shotgun.
-                    if noStateCollections:
-                        maxPluginStates = {}
-                        for collection in self._eventIdData.values():
-                            for pluginName, pluginState in collection.items():
-                                if pluginName in maxPluginStates.keys():
-                                    if pluginState[0] > maxPluginStates[pluginName][0]:
-                                        maxPluginStates[pluginName] = pluginState
-                                else:
+                # If we don't have a state it means there's no match
+                # in the id table. First we'll search to see the latest id a
+                # matching plugin name has elsewhere in the id table. We do
+                # this as a fallback in case the plugins directory has been
+                # moved. If there's no match, use the latest event id
+                # in Shotgun.
+                if noStateCollections:
+                    maxPluginStates = {}
+                    for collection in self._eventIdData.values():
+                        for pluginName, pluginState in collection.items():
+                            if pluginName in maxPluginStates.keys():
+                                if pluginState[0] > maxPluginStates[pluginName][0]:
                                     maxPluginStates[pluginName] = pluginState
+                            else:
+                                maxPluginStates[pluginName] = pluginState
 
-                        lastEventId = self._getLastEventIdFromDatabase()
-                        for collection in noStateCollections:
-                            state = collection.getState()
-                            for pluginName in state.keys():
-                                if pluginName in maxPluginStates.keys():
-                                    state[pluginName] = maxPluginStates[pluginName]
-                                else:
-                                    state[pluginName] = lastEventId
-                            collection.setState(state)
+                    lastEventId = self._getLastEventIdFromDatabase()
+                    for collection in noStateCollections:
+                        state = collection.getState()
+                        for pluginName in state.keys():
+                            if pluginName in maxPluginStates.keys():
+                                state[pluginName] = maxPluginStates[pluginName]
+                            else:
+                                state[pluginName] = lastEventId
+                        collection.setState(state)
 
-                except pickle.UnpicklingError:
-                    fh.close()
-
-                    # Backwards compatibility:
-                    # Reopen the file to try to read an old-style int
-                    fh = open(eventIdFile, "rb")
-                    line = fh.readline().strip()
-                    if line.isdigit():
-                        # The _loadEventIdData got an old-style id file containing a single
-                        # int which is the last id properly processed.
-                        lastEventId = int(line)
-                        self.log.debug(
-                            "Read last event id (%d) from file.", lastEventId
-                        )
-                        for collection in self._pluginCollections:
-                            collection.setState(lastEventId)
+            except pickle.UnpicklingError:
                 fh.close()
-            except OSError as err:
-                raise EventDaemonError(
-                    "Could not load event id from file.\n\n%s"
-                    % traceback.format_exc(err)
-                )
+
+                # Backwards compatibility:
+                # Reopen the file to try to read an old-style int
+                fh = open(eventIdFile, "rb")
+                line = fh.readline().strip()
+                if line.isdigit():
+                    # The _loadEventIdData got an old-style id file containing a single
+                    # int which is the last id properly processed.
+                    lastEventId = int(line)
+                    self.log.debug(
+                        "Read last event id (%d) from file.", lastEventId
+                    )
+                    for collection in self._pluginCollections:
+                        collection.setState(lastEventId)
         else:
             # No id file?
             # Get the event data from the database.
@@ -669,30 +714,26 @@ class Engine(object):
 
     def _saveEventIdData(self):
         """
-        Save an event Id to persistant storage.
+        Save an event Id to AWS DynamoDB.
 
         Next time the engine is started it will try to read the event id from
-        this location to know at which event it should start processing.
+        this database to know at which event it should start processing.
         """
-        eventIdFile = self.config.getEventIdFile()
+        eventIdTable = self.config.getEventIdTable()
 
-        if eventIdFile is not None:
+        if eventIdTable.table_exists():
             for collection in self._pluginCollections:
                 self._eventIdData[collection.path] = collection.getState()
 
             for colPath, state in self._eventIdData.items():
-                if state:
-                    try:
-                        with open(eventIdFile, "wb") as fh:
-                            # Use protocol 2 so it can also be loaded in Python 2
-                            pickle.dump(self._eventIdData, fh, protocol=2)
-                    except OSError as err:
-                        self.log.error(
-                            "Can not write event id data to %s.\n\n%s",
-                            eventIdFile,
-                            traceback.format_exc(err),
-                        )
-                    break
+                # Use protocol 2 so it can also be loaded in Python 2
+                plugin_state = pickle.dumps(state, protocol=2)
+                if eventIdTable.get_event_item(colPath):
+                    eventIdTable.update_event_item(
+                        colPath, plugin_state
+                    )
+                    continue
+                eventIdTable.add_event_item(colPath, plugin_state)
             else:
                 self.log.warning("No state was found. Not saving to disk.")
 
