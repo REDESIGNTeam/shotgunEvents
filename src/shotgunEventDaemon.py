@@ -221,8 +221,7 @@ class SgEventDaemonIDTable(object):
 
     def get_all_event_items(self):
         return {
-            i[self._SCHEMA_COL_PATH]: dynamodb_types.Binary(
-                i[self._SCHEMA_PLUGIN_STATE]).value for i in self._table.scan().get("Items")
+            i[self._SCHEMA_COL_PATH]: i[self._SCHEMA_PLUGIN_STATE] for i in self._table.scan().get("Items")
         }
 
     def add_event_item(self, col_path, plugin_state):
@@ -726,14 +725,16 @@ class Engine(object):
                 self._eventIdData[collection.path] = collection.getState()
 
             for colPath, state in self._eventIdData.items():
-                # Use protocol 2 so it can also be loaded in Python 2
-                plugin_state = pickle.dumps(state, protocol=2)
-                if eventIdTable.get_event_item(colPath):
-                    eventIdTable.update_event_item(
-                        colPath, plugin_state
-                    )
-                    continue
-                eventIdTable.add_event_item(colPath, plugin_state)
+                if state:
+                    # Use protocol 2 so it can also be loaded in Python 2
+                    plugin_state = pickle.dumps(state, protocol=2)
+                    if eventIdTable.get_event_item(colPath):
+                        eventIdTable.update_event_item(
+                            colPath, plugin_state
+                        )
+                    else:
+                        eventIdTable.add_event_item(colPath, plugin_state)
+                    break
             else:
                 self.log.warning("No state was found. Not saving to disk.")
 
