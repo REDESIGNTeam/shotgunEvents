@@ -519,7 +519,7 @@ class Engine(object):
         if eventIdTable.table_exists():
             try:
                 self._eventIdData = {
-                    col: pickle.loads(state) for (col, state) in eventIdTable.get_all_event_items().items()
+                    col: pickle.loads(state.value) for (col, state) in eventIdTable.get_all_event_items().items()
                 }
 
                 # Provide event id info to the plugin collections. Once
