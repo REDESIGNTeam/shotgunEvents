@@ -208,6 +208,11 @@ class SgEventDaemonIDTable(object):
     def __init__(self, table, region):
         self._dynamodb = boto3.resource("dynamodb", region_name=region)
         self._table = self._dynamodb.Table(table)
+        self._table_name = self._table.table_name
+
+    @property
+    def table_name(self):
+        return self._table_name
 
     def table_exists(self):
         try:
@@ -521,6 +526,7 @@ class Engine(object):
                 self._eventIdData = {
                     col: pickle.loads(state.value) for (col, state) in eventIdTable.get_all_event_items().items()
                 }
+                self.log.debug("Reading plugin state from the DynamoDB table %s", eventIdTable.table_name)
 
                 # Provide event id info to the plugin collections. Once
                 # they've figured out what to do with it, ask them for their
@@ -560,23 +566,10 @@ class Engine(object):
                         collection.setState(state)
 
             except pickle.UnpicklingError:
-                fh.close()
+                self.log.debug("Couldn't read retrieved plugin state from the DynamoDB.")
 
-                # Backwards compatibility:
-                # Reopen the file to try to read an old-style int
-                fh = open(eventIdFile, "rb")
-                line = fh.readline().strip()
-                if line.isdigit():
-                    # The _loadEventIdData got an old-style id file containing a single
-                    # int which is the last id properly processed.
-                    lastEventId = int(line)
-                    self.log.debug(
-                        "Read last event id (%d) from file.", lastEventId
-                    )
-                    for collection in self._pluginCollections:
-                        collection.setState(lastEventId)
         else:
-            # No id file?
+            # No id table?
             # Get the event data from the database.
             lastEventId = self._getLastEventIdFromDatabase()
             if lastEventId:
@@ -732,11 +725,13 @@ class Engine(object):
                         eventIdTable.update_event_item(
                             colPath, plugin_state
                         )
+                        self.log.debug("Updating plugin state for the collection path %s", colPath)
                     else:
                         eventIdTable.add_event_item(colPath, plugin_state)
+                        self.log.debug("Adding new plugin state for the collection path %s", colPath)
                     break
             else:
-                self.log.warning("No state was found. Not saving to disk.")
+                self.log.warning("No state was found. Not saving to DynamoDB.")
 
     def _checkConnectionAttempts(self, conn_attempts, msg):
         conn_attempts += 1
