@@ -6,6 +6,17 @@
 # after the next pass through the event processing loop.
 pidFile: /usr/local/shotgun/logs/shotgunEventDaemon/shotgunEventDaemon.pid
 
+# -local
+# -dynamo
+configMode: local
+
+# The eventIdFile is the location where the daemon will store the id of the last
+# processed event. This will allow the daemon to pick up where it left off when
+# last shutdown thus not missing any events. If you want to ignore any events
+# since last daemon shutdown, remove this file before daemon startup and the
+# daemon will process only new events created after startup.
+eventIdFile: /usr/local/shotgun/logs/shotgunEventDaemon/shotgunEventDaemon.id
+
 # The eventIdTable is the AWS DynamoDB table where the daemon will store the id of the last
 # processed event. This will allow the daemon to pick up where it left off when
 # last shutdown thus not missing any events. If you want to ignore any events
