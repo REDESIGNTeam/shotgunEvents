@@ -637,7 +637,9 @@ class Engine(object):
                 # they've figured out what to do with it, ask them for their
                 # last processed id.
                 noStateCollections = []
+                self.log.info("Plugin collection : {}".format(self._pluginCollections))
                 for collection in self._pluginCollections:
+                    self.log.info("collection path : {}".format(collection))
                     state = self._eventIdData.get(collection.path)
                     if state:
                         collection.setState(state)
