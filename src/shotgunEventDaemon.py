@@ -259,11 +259,12 @@ class Config(configparser.SafeConfigParser):
         self._sg_secret = None
         if self.getConfigMode() == 'dynamo':
             self._ec2_region = _get_instance_region()
-            self._sg_host = _get_sg_host(self._ec2_region)
+            # self._sg_host = _get_sg_host(self._ec2_region)
+            self._sg_host = 'https://redesign.shotgunstudio.com/'
             self._sg_secret = _get_sg_secret(self.getEngineScriptName(), self._ec2_region)
 
     def getConfigMode(self):
-        mode = self.get("shotgun", "configMode")
+        mode = self.get("daemon", "configMode")
         return mode
 
     def getShotgunURL(self):
@@ -532,12 +533,12 @@ class Engine(object):
 
     def _loadEventIdFromLocal(self):
         """
-                Load the last processed event id from the disk
-                If no event has ever been processed or if the eventIdFile has been
-                deleted from disk, no id will be recoverable. In this case, we will try
-                contacting Shotgun to get the latest event's id and we'll start
-                processing from there.
-                """
+        Load the last processed event id from the disk
+        If no event has ever been processed or if the eventIdFile has been
+        deleted from disk, no id will be recoverable. In this case, we will try
+        contacting Shotgun to get the latest event's id and we'll start
+        processing from there.
+        """
         eventIdFile = self.config.getEventIdFile()
 
         if eventIdFile and os.path.exists(eventIdFile):
@@ -605,6 +606,15 @@ class Engine(object):
                     "Could not load event id from file.\n\n%s"
                     % traceback.format_exc(err)
                 )
+        else:
+            # No id file?
+            # Get the event data from the database.
+            lastEventId = self._getLastEventIdFromDatabase()
+            if lastEventId:
+                for collection in self._pluginCollections:
+                    collection.setState(lastEventId)
+
+            self._saveEventIdData()
 
     def _loadEventIdFromTable(self):
         """
