@@ -626,7 +626,8 @@ class Engine(object):
                 """
         eventIdTable = self.config.getEventIdTable()
 
-        if eventIdTable.table_exists():
+        if eventIdTable.table_exists() and \
+                not set(self.config.getPluginPaths()).isdisjoint(list(eventIdTable.get_all_event_items().keys())):
             try:
                 self._eventIdData = {
                     col: pickle.loads(state.value) for (col, state) in eventIdTable.get_all_event_items().items()
