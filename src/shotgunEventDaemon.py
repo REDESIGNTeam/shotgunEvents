@@ -638,9 +638,7 @@ class Engine(object):
                 # they've figured out what to do with it, ask them for their
                 # last processed id.
                 noStateCollections = []
-                self.log.info("Plugin collection : {}".format(self._pluginCollections))
                 for collection in self._pluginCollections:
-                    self.log.info("collection path : {}".format(collection))
                     state = self._eventIdData.get(collection.path)
                     if state:
                         collection.setState(state)
@@ -813,10 +811,8 @@ class Engine(object):
 
     def _saveEventIdData(self):
         if self.config.getConfigMode() == 'local':
-            self.log.debug("Calling save event in local file")
             self._saveEventIdInFile()
         elif self.config.getConfigMode() == 'dynamo':
-            self.log.debug("Calling save event in table")
             self._saveEventIdInTable()
 
     def _saveEventIdInTable(self):
@@ -831,7 +827,7 @@ class Engine(object):
         if eventIdTable.table_exists():
             for collection in self._pluginCollections:
                 self._eventIdData[collection.path] = collection.getState()
-            self.log.debug("event data items : {}", self._eventIdData)
+
             for colPath, state in self._eventIdData.items():
                 if state:
                     # Use protocol 2 so it can also be loaded in Python 2
