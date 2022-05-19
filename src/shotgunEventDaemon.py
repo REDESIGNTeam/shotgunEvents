@@ -206,19 +206,21 @@ class Config(configparser.SafeConfigParser):
         self.read(path)
 
     def getShotgunURL(self):
-        server = self.get("shotgun", "server")
-        if server:
-            return server
+        if self.has_option("shotgun", "server"):
+            server = self.get("shotgun", "server")
+            if server:
+                return server
         return _get_sg_host()
 
     def getEngineScriptName(self):
         return self.get("shotgun", "name")
 
     def getEngineScriptKey(self):
-        key = self.get("shotgun", "key")
-        if key:
-            return key
-        return _get_sg_secret(self.getEngineScriptName())
+        if self.has_option("shotgun", "server"):
+            key = self.get("shotgun", "key")
+            if key:
+                return key
+            return _get_sg_secret(self.getEngineScriptName())
 
     def getEngineProxyServer(self):
         try:
