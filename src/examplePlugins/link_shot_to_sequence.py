@@ -126,7 +126,7 @@ def is_valid(sg, logger, args):
         # Bail if we're missing any required args.
         try:
             args[name]
-        except Exception, e:
+        except Exception as e:
             logger.warning("Missing arg: %s." % name)
             return
 
@@ -154,7 +154,7 @@ def is_valid(sg, logger, args):
     # Make sure we can read the entity_type's schema.
     try:
         entity_schema = sg.schema_field_read("Sequence")
-    except Exception, e:
+    except Exception as e:
         logger.warning(
             "Can't read Shotgun schema for \"entity_type\" args's value (\"%s\"): %s" % (
                 args["entity_type"],
