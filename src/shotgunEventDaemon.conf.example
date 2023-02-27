@@ -1,11 +1,6 @@
 [daemon]
 # General daemon operational settings
 
-# The pidFile is the location where the daemon will store its process id. If
-# this file is removed while the daemon is running, it will shutdown cleanly
-# after the next pass through the event processing loop.
-pidFile: /usr/local/shotgun/logs/shotgunEventDaemon/shotgunEventDaemon.pid
-
 # The eventIdFile is the location where the daemon will store the id of the last
 # processed event. This will allow the daemon to pick up where it left off when
 # last shutdown thus not missing any events. If you want to ignore any events
@@ -61,6 +56,11 @@ fetch_interval = 5
 # Maimum number of events to fetch at once.
 max_event_batch_size = 500
 
+# If we should process events in batch (can be on / off)
+batch_plugin: off
+
+# Number of seconds to wait until we retry
+conn_sleep: 10
 
 [shotgun]
 # Shotgun connection options for the daemon
