@@ -862,7 +862,7 @@ class Plugin(object):
         for k in list(self._backlog):
             v = self._backlog[k]
             if v < now:
-                self.logger.warning("Timeout elapsed on backlog event id %d.", k)
+                #self.logger.warning("Timeout elapsed on backlog event id %d.", k)
                 del self._backlog[k]
             elif nextId is None or k < nextId:
                 nextId = k
