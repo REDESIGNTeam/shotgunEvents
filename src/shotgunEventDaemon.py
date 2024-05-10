@@ -83,13 +83,13 @@ Line: %(lineno)d
 %(message)s"""
 
 
-def _setFilePathOnLogger(logger, path):
+def _setFilePathOnLogger(logger, path, backupCount=10):
     # Remove any previous handler.
     _removeHandlersFromLogger(logger, logging.handlers.TimedRotatingFileHandler)
 
     # Add the file handler
     handler = logging.handlers.TimedRotatingFileHandler(
-        path, "midnight", backupCount=10
+        path, "midnight", backupCount=backupCount
     )
     handler.setFormatter(
         logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -322,6 +322,12 @@ class Config(configparser.SafeConfigParser):
         else:
             return None
 
+    def getBackupCount(self):
+        if self.has_option("daemon", "backup_count"):
+            return self.getint("daemon", "backup_count")
+        return 10
+
+
 class Engine(object):
     """
     The engine holds the main loop of event processing.
@@ -358,7 +364,7 @@ class Engine(object):
             # Set the root logger for file output.
             rootLogger = logging.getLogger()
             rootLogger.config = self.config
-            _setFilePathOnLogger(rootLogger, self.config.getLogFile())
+            _setFilePathOnLogger(rootLogger, self.config.getLogFile(), self.config.getBackupCount())
             print(self.config.getLogFile())
 
             # Set the engine logger for email output.
@@ -368,7 +374,7 @@ class Engine(object):
             # Set the engine logger for file and email output.
             self.log = logging.getLogger("engine")
             self.log.config = self.config
-            _setFilePathOnLogger(self.log, self.config.getLogFile())
+            _setFilePathOnLogger(self.log, self.config.getLogFile(), self.config.getBackupCount())
             self.setEmailsOnLogger(self.log, True)
 
         self.log.setLevel(self.config.getLogLevel())
@@ -378,7 +384,7 @@ class Engine(object):
         if timing_log_filename:
             self.timing_logger = logging.getLogger("timing")
             self.timing_logger.setLevel(self.config.getLogLevel())
-            _setFilePathOnLogger(self.timing_logger, timing_log_filename)
+            _setFilePathOnLogger(self.timing_logger, timing_log_filename, self.config.getBackupCount())
         else:
             self.timing_logger = None
 
@@ -835,7 +841,8 @@ class Plugin(object):
         self.logger.setLevel(self._engine.config.getLogLevel())
         if self._engine.config.getLogMode() == 1:
             _setFilePathOnLogger(
-                self.logger, self._engine.config.getLogFile("plugin." + self.getName())
+                self.logger, self._engine.config.getLogFile("plugin." + self.getName()),
+                self._engine.config.getBackupCount()
             )
 
     def getName(self):
@@ -981,12 +988,12 @@ class Plugin(object):
     def process(self, event):
         if event["id"] in self._backlog:
             if self._process(event):
-                self.logger.info("Processed id %d from backlog." % event["id"])
+                #self.logger.info("Processed id %d from backlog." % event["id"])
                 del self._backlog[event["id"]]
                 self._updateLastEventId(event)
         elif self._lastEventId is not None and event["id"] <= self._lastEventId:
             msg = "Event %d is too old. Last event processed was (%d)."
-            self.logger.debug(msg, event["id"], self._lastEventId)
+            #self.logger.debug(msg, event["id"], self._lastEventId)
         else:
             if self._process(event):
                 self._updateLastEventId(event)
@@ -997,8 +1004,8 @@ class Plugin(object):
         for callback in self:
             if callback.isActive():
                 if callback.canProcess(event):
-                    msg = "Dispatching event %d to callback %s."
-                    self.logger.debug(msg, event["id"], str(callback))
+                    #msg = "Dispatching event %d to callback %s."
+                    #self.logger.debug(msg, event["id"], str(callback))
                     if not callback.process(event):
                         # A callback in the plugin failed. Deactivate the whole
                         # plugin.

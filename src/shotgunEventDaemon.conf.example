@@ -61,6 +61,8 @@ fetch_interval = 5
 # Maimum number of events to fetch at once.
 max_event_batch_size = 500
 
+# Max backup count for logs
+backup_count = 10
 
 [shotgun]
 # Shotgun connection options for the daemon
